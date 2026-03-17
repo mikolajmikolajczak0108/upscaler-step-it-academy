@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 import time
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtMultimedia, QtMultimediaWidgets, QtWidgets
 
 from .config import save_settings
 from .models import AppSettings, JobOptions, JobRecord
@@ -106,6 +106,170 @@ class ImageCompareViewer(QtWidgets.QWidget):
         self.update()
 
 
+class ImageComparisonDialog(QtWidgets.QDialog):
+    def __init__(self, pairs: list[tuple[Path, Path]], start_index: int = 0, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.pairs = pairs
+        self.current_index = max(0, min(start_index, len(pairs) - 1)) if pairs else 0
+
+        self.setWindowTitle("Image Before / After")
+        self.resize(1280, 820)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        controls = QtWidgets.QHBoxLayout()
+        self.prev_button = QtWidgets.QPushButton("Prev")
+        self.prev_button.clicked.connect(self.show_previous)
+        self.next_button = QtWidgets.QPushButton("Next")
+        self.next_button.clicked.connect(self.show_next)
+        self.info_label = QtWidgets.QLabel("")
+        self.info_label.setWordWrap(True)
+        controls.addWidget(self.prev_button)
+        controls.addWidget(self.next_button)
+        controls.addWidget(self.info_label, stretch=1)
+        layout.addLayout(controls)
+
+        self.viewer = ImageCompareViewer()
+        self.viewer.setMinimumSize(960, 640)
+        layout.addWidget(self.viewer, stretch=1)
+
+        self._show_pair()
+
+    def _show_pair(self) -> None:
+        if not self.pairs:
+            self.viewer.clear()
+            self.info_label.setText("No image pair available.")
+            self.prev_button.setEnabled(False)
+            self.next_button.setEnabled(False)
+            return
+        before_path, after_path = self.pairs[self.current_index]
+        self.viewer.set_images(before_path, after_path)
+        self.info_label.setText(f"{self.current_index + 1}/{len(self.pairs)}  {before_path.name} -> {after_path.name}")
+        self.prev_button.setEnabled(self.current_index > 0)
+        self.next_button.setEnabled(self.current_index < len(self.pairs) - 1)
+
+    def show_previous(self) -> None:
+        if self.current_index > 0:
+            self.current_index -= 1
+            self._show_pair()
+
+    def show_next(self) -> None:
+        if self.current_index < len(self.pairs) - 1:
+            self.current_index += 1
+            self._show_pair()
+
+
+class VideoComparisonDialog(QtWidgets.QDialog):
+    def __init__(self, before_path: Path, after_path: Path, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.before_path = before_path
+        self.after_path = after_path
+        self.is_scrubbing = False
+
+        self.setWindowTitle("Video Before / After")
+        self.resize(1440, 860)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        labels = QtWidgets.QHBoxLayout()
+        before_label = QtWidgets.QLabel(f"Original: {before_path.name}")
+        after_label = QtWidgets.QLabel(f"Upscaled: {after_path.name}")
+        labels.addWidget(before_label, stretch=1)
+        labels.addWidget(after_label, stretch=1)
+        layout.addLayout(labels)
+
+        viewers = QtWidgets.QHBoxLayout()
+        self.before_video = QtMultimediaWidgets.QVideoWidget()
+        self.after_video = QtMultimediaWidgets.QVideoWidget()
+        viewers.addWidget(self.before_video, stretch=1)
+        viewers.addWidget(self.after_video, stretch=1)
+        layout.addLayout(viewers, stretch=1)
+
+        controls = QtWidgets.QHBoxLayout()
+        self.play_button = QtWidgets.QPushButton("Play")
+        self.play_button.clicked.connect(self.toggle_playback)
+        self.restart_button = QtWidgets.QPushButton("Restart")
+        self.restart_button.clicked.connect(self.restart_playback)
+        self.position_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.position_slider.setRange(0, 0)
+        self.position_slider.sliderPressed.connect(self._begin_scrub)
+        self.position_slider.sliderReleased.connect(self._end_scrub)
+        self.position_slider.sliderMoved.connect(self._set_position)
+        self.time_label = QtWidgets.QLabel("00:00 / 00:00")
+        controls.addWidget(self.play_button)
+        controls.addWidget(self.restart_button)
+        controls.addWidget(self.position_slider, stretch=1)
+        controls.addWidget(self.time_label)
+        layout.addLayout(controls)
+
+        self.before_player = QtMultimedia.QMediaPlayer(self)
+        self.after_player = QtMultimedia.QMediaPlayer(self)
+        self.before_audio = QtMultimedia.QAudioOutput(self)
+        self.after_audio = QtMultimedia.QAudioOutput(self)
+        self.before_audio.setVolume(0.0)
+        self.after_audio.setVolume(0.7)
+        self.before_player.setAudioOutput(self.before_audio)
+        self.after_player.setAudioOutput(self.after_audio)
+        self.before_player.setVideoOutput(self.before_video)
+        self.after_player.setVideoOutput(self.after_video)
+        self.before_player.setSource(QtCore.QUrl.fromLocalFile(str(before_path.resolve())))
+        self.after_player.setSource(QtCore.QUrl.fromLocalFile(str(after_path.resolve())))
+
+        self.after_player.durationChanged.connect(self._update_duration)
+        self.after_player.positionChanged.connect(self._update_position)
+        self.after_player.playbackStateChanged.connect(self._sync_play_button)
+
+    def _format_ms(self, milliseconds: int) -> str:
+        seconds = max(0, milliseconds // 1000)
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
+    def _update_duration(self, duration: int) -> None:
+        self.position_slider.setRange(0, max(0, duration))
+        self.time_label.setText(f"{self._format_ms(self.after_player.position())} / {self._format_ms(duration)}")
+
+    def _update_position(self, position: int) -> None:
+        if not self.is_scrubbing:
+            self.position_slider.setValue(position)
+        self.time_label.setText(f"{self._format_ms(position)} / {self._format_ms(self.after_player.duration())}")
+
+    def _sync_play_button(self, state: QtMultimedia.QMediaPlayer.PlaybackState) -> None:
+        self.play_button.setText("Pause" if state == QtMultimedia.QMediaPlayer.PlaybackState.PlayingState else "Play")
+
+    def _begin_scrub(self) -> None:
+        self.is_scrubbing = True
+
+    def _end_scrub(self) -> None:
+        self.is_scrubbing = False
+        self._set_position(self.position_slider.value())
+
+    def _set_position(self, position: int) -> None:
+        self.before_player.setPosition(position)
+        self.after_player.setPosition(position)
+
+    def toggle_playback(self) -> None:
+        if self.after_player.playbackState() == QtMultimedia.QMediaPlayer.PlaybackState.PlayingState:
+            self.before_player.pause()
+            self.after_player.pause()
+        else:
+            current = self.after_player.position()
+            self.before_player.setPosition(current)
+            self.after_player.setPosition(current)
+            self.before_player.play()
+            self.after_player.play()
+
+    def restart_playback(self) -> None:
+        self._set_position(0)
+        self.before_player.play()
+        self.after_player.play()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
+        self.before_player.stop()
+        self.after_player.stop()
+        super().closeEvent(event)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, settings: AppSettings) -> None:
         super().__init__()
@@ -114,6 +278,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.active_job: JobRecord | None = None
         self.active_worker: JobWorker | None = None
         self.install_workers: list[ToolInstallWorker] = []
+        self.preview_dialogs: list[QtWidgets.QDialog] = []
         self.compare_pairs: list[tuple[Path, Path]] = []
         self.current_compare_index = 0
         self.active_job_started_at: float | None = None
@@ -374,9 +539,9 @@ class MainWindow(QtWidgets.QMainWindow):
         image_row += 1
 
         self.image_output_edit = QtWidgets.QLineEdit()
-        image_output_btn = QtWidgets.QPushButton("Output Folder")
-        image_output_btn.clicked.connect(self.pick_image_output_dir)
-        image_layout.addWidget(QtWidgets.QLabel("Output folder"), image_row, 0)
+        image_output_btn = QtWidgets.QPushButton("Choose Output")
+        image_output_btn.clicked.connect(self.pick_image_output_target)
+        image_layout.addWidget(QtWidgets.QLabel("Output target"), image_row, 0)
         image_layout.addWidget(self.image_output_edit, image_row, 1, 1, 2)
         image_layout.addWidget(image_output_btn, image_row, 3)
         image_row += 1
@@ -414,6 +579,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_format_combo.addItem("PNG", "png")
         self.image_format_combo.addItem("JPG", "jpg")
         self.image_format_combo.addItem("WEBP", "webp")
+        self.image_format_combo.currentIndexChanged.connect(self.sync_single_image_output_suffix)
         image_layout.addWidget(QtWidgets.QLabel("Output format"), image_row, 2)
         image_layout.addWidget(self.image_format_combo, image_row, 3)
         image_row += 1
@@ -810,6 +976,19 @@ class MainWindow(QtWidgets.QMainWindow):
             eta,
         )
 
+    def sync_single_image_output_suffix(self) -> None:
+        input_text = self.image_input_edit.text().strip()
+        output_text = self.image_output_edit.text().strip()
+        if not input_text or not output_text:
+            return
+        input_path = Path(input_text)
+        output_path = Path(output_text)
+        if not input_path.exists() or not input_path.is_file():
+            return
+        suffix = f".{self.image_format_combo.currentData()}"
+        if output_path.suffix:
+            self.image_output_edit.setText(str(output_path.with_suffix(suffix)))
+
     def refresh_compare_pairs(self) -> None:
         input_text = self.image_input_edit.text().strip()
         output_text = self.image_output_edit.text().strip()
@@ -827,6 +1006,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_compare_pair()
             return
 
+        self.compare_pairs = self._build_compare_pairs(input_path, output_path)
+        if self.current_compare_index >= len(self.compare_pairs):
+            self.current_compare_index = max(0, len(self.compare_pairs) - 1)
+        self._show_compare_pair()
+
+    def _build_compare_pairs(self, input_path: Path, output_path: Path) -> list[tuple[Path, Path]]:
+        if input_path.is_file():
+            if output_path.is_file():
+                return [(input_path, output_path)] if output_path.exists() else []
+            if output_path.is_dir():
+                output_files = list_image_files(output_path)
+                candidate = next((path for path in output_files if path.stem.startswith(f"{input_path.stem}_lifted")), None)
+                return [(input_path, candidate)] if candidate else []
+            return []
+
+        if not output_path.is_dir():
+            return []
+
         source_files = list_image_files(input_path)
         output_files = list_image_files(output_path)
         output_by_stem = {path.stem: path for path in output_files}
@@ -838,11 +1035,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 candidate = next((path for path in output_files if path.stem.startswith(f"{source.stem}_lifted")), None)
             if candidate:
                 pairs.append((source, candidate))
-
-        self.compare_pairs = pairs
-        if self.current_compare_index >= len(self.compare_pairs):
-            self.current_compare_index = max(0, len(self.compare_pairs) - 1)
-        self._show_compare_pair()
+        return pairs
 
     def _show_compare_pair(self) -> None:
         if not self.compare_pairs:
@@ -874,6 +1067,21 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.current_compare_index = min(len(self.compare_pairs) - 1, self.current_compare_index + 1)
         self._show_compare_pair()
+
+    def open_result_viewer(self, job: JobRecord) -> None:
+        if job.options.job_kind == "image":
+            pairs = self._build_compare_pairs(job.options.input_path, job.options.output_path)
+            if not pairs:
+                return
+            dialog = ImageComparisonDialog(pairs, parent=self)
+        else:
+            if not job.options.input_path.exists() or not job.options.output_path.exists():
+                return
+            dialog = VideoComparisonDialog(job.options.input_path, job.options.output_path, parent=self)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.finished.connect(lambda _result, d=dialog: self.preview_dialogs.remove(d) if d in self.preview_dialogs else None)
+        self.preview_dialogs.append(dialog)
+        dialog.show()
 
     def pick_input(self) -> None:
         start_dir = self.settings.last_input_dir or str(Path.home())
@@ -953,13 +1161,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analyze_image_input()
         self.refresh_compare_pairs()
 
-    def pick_image_output_dir(self) -> None:
+    def pick_image_output_target(self) -> None:
         start_dir = self.settings.last_output_dir or str(Path.home())
-        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output folder", start_dir)
-        if not folder:
-            return
-        self.image_output_edit.setText(folder)
-        self.settings.last_output_dir = folder
+        input_path = Path(self.image_input_edit.text().strip())
+        if input_path.exists() and input_path.is_file():
+            default_target = self.image_output_edit.text().strip() or str(
+                input_path.with_name(f"{input_path.stem}_lifted.{self.image_format_combo.currentData()}")
+            )
+            file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                "Select output image",
+                default_target,
+                "Images (*.png *.jpg *.jpeg *.webp);;All Files (*.*)",
+            )
+            if not file_path:
+                return
+            self.image_output_edit.setText(file_path)
+            self.settings.last_output_dir = str(Path(file_path).parent)
+        else:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output folder", start_dir)
+            if not folder:
+                return
+            self.image_output_edit.setText(folder)
+            self.settings.last_output_dir = folder
         save_settings(self.settings)
         self.refresh_compare_pairs()
 
@@ -981,7 +1205,12 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.image_meta_box.setPlainText(message)
         if not self.image_output_edit.text().strip():
-            self.image_output_edit.setText(str(files[0].parent / "upscaled_images"))
+            if input_path.is_file():
+                self.image_output_edit.setText(
+                    str(files[0].with_name(f"{files[0].stem}_lifted.{self.image_format_combo.currentData()}"))
+                )
+            else:
+                self.image_output_edit.setText(str(files[0].parent / "upscaled_images"))
         self.refresh_compare_pairs()
 
     def collect_job_options(self) -> JobOptions:
@@ -1021,7 +1250,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not input_path.exists():
             raise ValueError("Input image or folder does not exist.")
         if not output_path.name:
-            raise ValueError("Output folder is required.")
+            raise ValueError("Output target is required.")
+
+        image_output_format = str(self.image_format_combo.currentData())
+        if input_path.is_file():
+            if output_path.suffix:
+                image_output_format = output_path.suffix.lstrip(".").lower()
+            else:
+                output_path = output_path / f"{input_path.stem}_lifted.{image_output_format}"
+        elif output_path.suffix:
+            raise ValueError("For batch folders, output must be a folder.")
+
         return JobOptions(
             input_path=input_path,
             output_path=output_path,
@@ -1041,7 +1280,7 @@ class MainWindow(QtWidgets.QMainWindow):
             keep_temp=False,
             job_kind="image",
             image_scale=int(self.image_scale_combo.currentData()),
-            image_output_format=str(self.image_format_combo.currentData()),
+            image_output_format=image_output_format,
             brightness=self.image_brightness_spin.value(),
             contrast=self.image_contrast_spin.value(),
             saturation=self.image_saturation_spin.value(),
@@ -1154,6 +1393,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_active_job_panel(f"Last job completed: {completed_job.id}", 100, "completed", None, None)
         if completed_job.options.job_kind == "image":
             self.refresh_compare_pairs()
+        self.open_result_viewer(completed_job)
         self.statusBar().showMessage("Job completed")
         self.start_next_job()
 

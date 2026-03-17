@@ -19,8 +19,10 @@ Desktopowa aplikacja do upscalingu video i obrazow z prostym GUI, kolejka zadan 
 - lokalny AI upscale przez `Real-ESRGAN`
 - AI frame interpolation przez `RIFE`
 - batch i single-image upscale
+- single-image output moze byc zapisany bezposrednio do konkretnego pliku
 - korekty obrazu: `autocontrast`, `brightness`, `contrast`, `saturation`, `gamma`, `denoise`, `sharpen`
 - output obrazow do `png`, `jpg`, `webp`
+- automatyczne okno `before / after` po zakonczeniu joba dla obrazow i video
 - queue, cancel, logi, detekcja narzedzi, downloader narzedzi
 - encode `h264_nvenc`, `hevc_nvenc`, `libx264`
 

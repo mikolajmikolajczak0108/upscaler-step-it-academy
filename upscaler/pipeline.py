@@ -366,7 +366,8 @@ class PipelineRunner:
 
     def _run_image_pipeline(self) -> None:
         input_path = self.options.input_path
-        output_dir = self.options.output_path
+        single_output_path = self.options.output_path if input_path.is_file() and self.options.output_path.suffix else None
+        output_dir = single_output_path.parent if single_output_path else self.options.output_path
         output_dir.mkdir(parents=True, exist_ok=True)
 
         files = list_image_files(input_path)
@@ -386,11 +387,16 @@ class PipelineRunner:
 
         if use_ai_upscale:
             self.log(f"Using local AI image upscale backend with model {self.options.upscale_model}.")
-            self._run_image_ai_pipeline(files, output_dir)
+            self._run_image_ai_pipeline(files, output_dir, single_output_path)
         else:
-            self._run_image_pillow_pipeline(files, output_dir)
+            self._run_image_pillow_pipeline(files, output_dir, single_output_path)
 
-    def _run_image_ai_pipeline(self, files: list[Path], output_dir: Path) -> None:
+    def _run_image_ai_pipeline(
+        self,
+        files: list[Path],
+        output_dir: Path,
+        single_output_path: Path | None = None,
+    ) -> None:
         work_dir = temp_root() / f"{self.options.output_path.name}_images"
         if work_dir.exists():
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -430,7 +436,10 @@ class PipelineRunner:
                 raise PipelineError("Real-ESRGAN did not produce any output images.")
 
             for index, image_path in enumerate(ai_files, start=1):
-                output_path = output_dir / f"{image_path.stem}_lifted.{self.options.image_output_format}"
+                if single_output_path and len(ai_files) == 1:
+                    output_path = single_output_path
+                else:
+                    output_path = output_dir / f"{image_path.stem}_lifted.{self.options.image_output_format}"
                 self._apply_image_postprocess(image_path, output_path)
                 progress = 70 + math.floor((index / max(1, len(ai_files))) * 30)
                 self.progress(progress, "Post-processing images")
@@ -438,7 +447,12 @@ class PipelineRunner:
             if not self.options.keep_temp:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
-    def _run_image_pillow_pipeline(self, files: list[Path], output_dir: Path) -> None:
+    def _run_image_pillow_pipeline(
+        self,
+        files: list[Path],
+        output_dir: Path,
+        single_output_path: Path | None = None,
+    ) -> None:
         total = max(1, len(files))
         for index, image_path in enumerate(files, start=1):
             with Image.open(image_path) as source:
@@ -448,7 +462,10 @@ class PipelineRunner:
                     height = max(1, working.height * self.options.image_scale)
                     working = working.resize((width, height), Image.Resampling.LANCZOS)
                 working = apply_image_adjustments(working, self.options)
-                output_path = output_dir / f"{image_path.stem}_lifted.{self.options.image_output_format}"
+                if single_output_path and len(files) == 1:
+                    output_path = single_output_path
+                else:
+                    output_path = output_dir / f"{image_path.stem}_lifted.{self.options.image_output_format}"
                 self._save_image(working, output_path)
             self.progress(5 + math.floor((index / total) * 95), "Processing images")
 
