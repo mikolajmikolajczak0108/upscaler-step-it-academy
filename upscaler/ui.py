@@ -557,13 +557,14 @@ class MainWindow(QtWidgets.QMainWindow):
         image_row += 1
 
         self.image_backend_combo = QtWidgets.QComboBox()
+        self.image_backend_combo.addItem("HAT (Recommended)", "hat")
         self.image_backend_combo.addItem("Pillow Lanczos", "ffmpeg")
         self.image_backend_combo.addItem("Local AI (Real-ESRGAN)", "realesrgan")
         image_layout.addWidget(QtWidgets.QLabel("Upscale backend"), image_row, 0)
         image_layout.addWidget(self.image_backend_combo, image_row, 1)
 
         self.image_model_combo = QtWidgets.QComboBox()
-        for model in ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus", "realesr-animevideov3"]:
+        for model in ["real_hat_gan", "real_hat_gan_sharper", "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus", "realesr-animevideov3"]:
             self.image_model_combo.addItem(model)
         image_layout.addWidget(QtWidgets.QLabel("Model"), image_row, 2)
         image_layout.addWidget(self.image_model_combo, image_row, 3)
@@ -670,6 +671,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ffprobe_edit = QtWidgets.QLineEdit()
         self.realesrgan_edit = QtWidgets.QLineEdit()
         self.rife_edit = QtWidgets.QLineEdit()
+        self.hat_edit = QtWidgets.QLineEdit()
 
         tools_layout.addWidget(QtWidgets.QLabel("ffmpeg"), 0, 0)
         tools_layout.addWidget(self.ffmpeg_edit, 0, 1, 1, 2)
@@ -688,9 +690,15 @@ class MainWindow(QtWidgets.QMainWindow):
         rife_btn.clicked.connect(lambda: self.install_tool("rife"))
         tools_layout.addWidget(rife_btn, 3, 2)
 
+        tools_layout.addWidget(QtWidgets.QLabel("HAT"), 4, 0)
+        tools_layout.addWidget(self.hat_edit, 4, 1)
+        hat_btn = QtWidgets.QPushButton("Download")
+        hat_btn.clicked.connect(lambda: self.install_tool("hat"))
+        tools_layout.addWidget(hat_btn, 4, 2)
+
         refresh_btn = QtWidgets.QPushButton("Refresh Detection")
         refresh_btn.clicked.connect(self.refresh_tool_status)
-        tools_layout.addWidget(refresh_btn, 4, 0, 1, 3)
+        tools_layout.addWidget(refresh_btn, 5, 0, 1, 3)
         left.addWidget(self.tools_group)
         self.tools_group.hide()
         left.addStretch(1)
@@ -844,20 +852,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_profile("Fast FFmpeg 1080p60")
         for name in IMAGE_PROFILES:
             self.image_profile_combo.addItem(name)
-        self.image_profile_combo.setCurrentText("Photo Lift 4x")
-        self.apply_image_profile("Photo Lift 4x")
+        self.image_profile_combo.setCurrentText("Photo Restore HAT 4x")
+        self.apply_image_profile("Photo Restore HAT 4x")
 
     def _load_settings_into_form(self) -> None:
         self.ffmpeg_edit.setText(self.settings.tool_paths.ffmpeg)
         self.ffprobe_edit.setText(self.settings.tool_paths.ffprobe)
         self.realesrgan_edit.setText(self.settings.tool_paths.realesrgan)
         self.rife_edit.setText(self.settings.tool_paths.rife)
+        self.hat_edit.setText(self.settings.tool_paths.hat)
 
     def refresh_tool_status(self) -> None:
         self.settings.tool_paths.ffmpeg = self.ffmpeg_edit.text().strip() or self.settings.tool_paths.ffmpeg
         self.settings.tool_paths.ffprobe = self.ffprobe_edit.text().strip() or self.settings.tool_paths.ffprobe
         self.settings.tool_paths.realesrgan = self.realesrgan_edit.text().strip()
         self.settings.tool_paths.rife = self.rife_edit.text().strip()
+        self.settings.tool_paths.hat = self.hat_edit.text().strip()
         refresh_tool_paths(self.settings)
         self._load_settings_into_form()
         save_settings(self.settings)
@@ -1348,6 +1358,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.tool_paths.ffprobe = self.ffprobe_edit.text().strip() or self.settings.tool_paths.ffprobe
         self.settings.tool_paths.realesrgan = self.realesrgan_edit.text().strip()
         self.settings.tool_paths.rife = self.rife_edit.text().strip()
+        self.settings.tool_paths.hat = self.hat_edit.text().strip()
         save_settings(self.settings)
 
         worker = JobWorker(replace(self.settings), pending.options)
@@ -1436,11 +1447,16 @@ class MainWindow(QtWidgets.QMainWindow):
         elif tool_key == "rife":
             self.rife_edit.setText(exe_path)
             self.settings.tool_paths.rife = exe_path
+        elif tool_key == "hat":
+            self.hat_edit.setText(exe_path)
+            self.settings.tool_paths.hat = exe_path
         save_settings(self.settings)
         self.statusBar().showMessage(f"{tool_key} ready")
         self.log(f"{tool_key} installed: {exe_path}")
         if tool_key == "realesrgan":
             self.log("Real-ESRGAN portable package installed with executable and model files.")
+        if tool_key == "hat":
+            self.log("HAT backend installed with official repository and pretrained image models.")
 
     def on_tool_failed(self, tool_key: str, message: str) -> None:
         self.statusBar().showMessage(f"{tool_key} install failed")
@@ -1457,5 +1473,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.tool_paths.ffprobe = self.ffprobe_edit.text().strip() or self.settings.tool_paths.ffprobe
         self.settings.tool_paths.realesrgan = self.realesrgan_edit.text().strip()
         self.settings.tool_paths.rife = self.rife_edit.text().strip()
+        self.settings.tool_paths.hat = self.hat_edit.text().strip()
         save_settings(self.settings)
         super().closeEvent(event)

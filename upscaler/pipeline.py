@@ -4,6 +4,8 @@ import json
 import math
 import shutil
 import subprocess
+import sys
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
@@ -13,7 +15,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from .config import temp_root
 from .models import AppSettings, JobOptions, VideoMetadata
-from .tools import realesrgan_model_available
+from .tools import hat_model_available, hat_model_path, realesrgan_model_available
 
 LogCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, str], None]
@@ -195,6 +197,67 @@ def parse_progress_microseconds(raw_value: str) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def build_hat_config(
+    config_path: Path,
+    job_name: str,
+    input_dir: Path,
+    model_path: Path,
+    tile_size: int,
+) -> None:
+    config_path.write_text(
+        "\n".join(
+            [
+                f"name: {job_name}",
+                "model_type: HATModel",
+                "scale: 4",
+                "num_gpu: 1",
+                "manual_seed: 0",
+                "",
+                "tile:",
+                f"  tile_size: {tile_size}",
+                "  tile_pad: 32",
+                "",
+                "datasets:",
+                "  test_1:",
+                "    name: custom",
+                "    type: SingleImageDataset",
+                f"    dataroot_lq: {input_dir.as_posix()}",
+                "    io_backend:",
+                "      type: disk",
+                "",
+                "network_g:",
+                "  type: HAT",
+                "  upscale: 4",
+                "  in_chans: 3",
+                "  img_size: 64",
+                "  window_size: 16",
+                "  compress_ratio: 3",
+                "  squeeze_factor: 30",
+                "  conv_scale: 0.01",
+                "  overlap_ratio: 0.5",
+                "  img_range: 1.",
+                "  depths: [6, 6, 6, 6, 6, 6]",
+                "  embed_dim: 180",
+                "  num_heads: [6, 6, 6, 6, 6, 6]",
+                "  mlp_ratio: 2",
+                "  upsampler: 'pixelshuffle'",
+                "  resi_connection: '1conv'",
+                "",
+                "path:",
+                f"  pretrain_network_g: {model_path.as_posix()}",
+                "  strict_load_g: true",
+                "  param_key_g: 'params_ema'",
+                "",
+                "val:",
+                "  save_img: true",
+                "  suffix: ~",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 class PipelineRunner:
@@ -382,14 +445,109 @@ class PipelineRunner:
             and bool(self.settings.tool_paths.realesrgan)
             and realesrgan_model_available(self.settings.tool_paths.realesrgan, self.options.upscale_model, self.options.image_scale)
         )
+        use_hat_upscale = (
+            self.options.upscale_backend == "hat"
+            and bool(self.settings.tool_paths.hat)
+            and hat_model_available(self.settings.tool_paths.hat, self.options.upscale_model)
+        )
+        fallback_realesrgan = (
+            self.options.upscale_backend == "hat"
+            and bool(self.settings.tool_paths.realesrgan)
+            and realesrgan_model_available(self.settings.tool_paths.realesrgan, "realesrgan-x4plus", self.options.image_scale)
+        )
         if self.options.upscale_backend == "realesrgan" and not use_ai_upscale:
             self.log("Real-ESRGAN portable binary or model pack missing, falling back to Pillow Lanczos upscale.")
+        if self.options.upscale_backend == "hat" and not use_hat_upscale:
+            if fallback_realesrgan:
+                self.log("HAT backend or model missing, falling back to Real-ESRGAN x4plus.")
+            else:
+                self.log("HAT backend or model missing, falling back to Pillow Lanczos upscale.")
 
-        if use_ai_upscale:
+        if use_hat_upscale:
+            self.log(f"Using HAT image backend with model {self.options.upscale_model}.")
+            self._run_image_hat_pipeline(files, output_dir, single_output_path)
+        elif fallback_realesrgan:
+            original_model = self.options.upscale_model
+            self.options = replace(self.options, upscale_backend="realesrgan", upscale_model="realesrgan-x4plus")
+            try:
+                self.log("Using Real-ESRGAN fallback model realesrgan-x4plus.")
+                self._run_image_ai_pipeline(files, output_dir, single_output_path)
+            finally:
+                self.options = replace(self.options, upscale_backend="hat", upscale_model=original_model)
+        elif use_ai_upscale:
             self.log(f"Using local AI image upscale backend with model {self.options.upscale_model}.")
             self._run_image_ai_pipeline(files, output_dir, single_output_path)
         else:
             self._run_image_pillow_pipeline(files, output_dir, single_output_path)
+
+    def _run_image_hat_pipeline(
+        self,
+        files: list[Path],
+        output_dir: Path,
+        single_output_path: Path | None = None,
+    ) -> None:
+        repo_root = Path(self.settings.tool_paths.hat).resolve()
+        work_dir = temp_root() / f"{self.options.output_path.stem}_hat"
+        if work_dir.exists():
+            shutil.rmtree(work_dir, ignore_errors=True)
+        input_dir = work_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+
+        source_by_stem: dict[str, Path] = {}
+        for source_path in files:
+            staged_path = input_dir / source_path.name
+            shutil.copy2(source_path, staged_path)
+            source_by_stem[source_path.stem] = source_path
+
+        run_name = f"hat_{self.options.output_path.stem}_{int(time.time())}"
+        config_path = work_dir / "hat_job.yml"
+        build_hat_config(
+            config_path,
+            run_name,
+            input_dir,
+            hat_model_path(self.settings.tool_paths.hat, self.options.upscale_model),
+            tile_size=512,
+        )
+
+        try:
+            self.progress(10, "Running HAT on images")
+            hat_cmd = [sys.executable, "-m", "hat.test", "-opt", str(config_path)]
+            self._run_process(hat_cmd, "hat-images", progress_span=(10, 75), cwd=repo_root)
+
+            result_dir = repo_root / "results" / run_name / "visualization" / "custom"
+            hat_files = list_image_files(result_dir)
+            if not hat_files:
+                raise PipelineError("HAT did not produce any output images.")
+
+            total = max(1, len(hat_files))
+            for index, image_path in enumerate(hat_files, start=1):
+                source_path = source_by_stem.get(image_path.stem)
+                if source_path is None:
+                    source_path = next((path for stem, path in source_by_stem.items() if image_path.stem.startswith(stem)), None)
+                if single_output_path and len(hat_files) == 1:
+                    output_path = single_output_path
+                else:
+                    output_path = output_dir / f"{image_path.stem}_lifted.{self.options.image_output_format}"
+
+                with Image.open(image_path) as hat_image:
+                    working = apply_image_adjustments(hat_image, self.options)
+                    if source_path and self.options.image_scale != 4:
+                        with Image.open(source_path) as original:
+                            working = working.resize(
+                                (
+                                    max(1, original.width * self.options.image_scale),
+                                    max(1, original.height * self.options.image_scale),
+                                ),
+                                Image.Resampling.LANCZOS,
+                            )
+                    self._save_image(working, output_path)
+
+                progress = 75 + math.floor((index / total) * 25)
+                self.progress(progress, "Post-processing images")
+        finally:
+            shutil.rmtree(repo_root / "results" / run_name, ignore_errors=True)
+            if not self.options.keep_temp:
+                shutil.rmtree(work_dir, ignore_errors=True)
 
     def _run_image_ai_pipeline(
         self,

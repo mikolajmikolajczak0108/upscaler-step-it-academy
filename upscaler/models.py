@@ -12,6 +12,7 @@ class ToolPaths:
     ffprobe: str = "ffprobe"
     realesrgan: str = ""
     rife: str = ""
+    hat: str = ""
 
 
 @dataclass(slots=True)

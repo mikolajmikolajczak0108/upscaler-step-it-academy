@@ -6,6 +6,8 @@ sample_images/
 sample_images_out/
 single_image_out/
 _inspect_realesrgan_py/
+HAT_Pretrained_Models/
+hat_single_out.png
 sample_input.mp4
 sample_ffmpeg_progress_fix.mp4
 sample_video_ai.mp4

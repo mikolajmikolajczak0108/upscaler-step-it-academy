@@ -7,6 +7,7 @@ Desktopowa aplikacja do upscalingu video i obrazow z prostym GUI, kolejka zadan 
 - `FFmpeg only`: dziala od razu na tej maszynie bez dodatkowych modeli.
 - `Local AI VSR`: uzywa lokalnych binarek `Real-ESRGAN-ncnn-vulkan` i `rife-ncnn-vulkan` z oficjalnych release'ow, bez chmury i bez fallbackowego braku modeli.
 - `Image Lift / Batch`: robi pojedynczy lub hurtowy upscale obrazow, plus korekcje koloru i podstawowy lifting.
+- `HAT image backend`: nowy, mocniejszy backend do obrazow oparty o oficjalny model `HAT`, domyslnie polecany ponad `Real-ESRGAN`.
 
 ## Co potrafi teraz
 
@@ -17,6 +18,7 @@ Desktopowa aplikacja do upscalingu video i obrazow z prostym GUI, kolejka zadan 
 - filtry video: `denoise`, `deband`, `temporal VSR`, `sharpen`, `grain`, `brightness`, `contrast`, `saturation`, `gamma`
 - skala klasyczna `ffmpeg`
 - lokalny AI upscale przez `Real-ESRGAN`
+- wyzszej klasy AI upscale obrazow przez `HAT`
 - AI frame interpolation przez `RIFE`
 - batch i single-image upscale
 - single-image output moze byc zapisany bezposrednio do konkretnego pliku
@@ -53,8 +55,8 @@ Skrypt:
 
 1. W sekcji `Image Upscale / Batch` wybierz plik albo folder.
 2. Wybierz output folder.
-3. Wybierz preset, np. `Photo Lift 4x` albo `Gentle Batch 2x`.
-4. Dla AI wybierz `Real-ESRGAN`; dla klasycznego upscale mozna zostawic `Pillow Lanczos`.
+3. Wybierz preset, np. `Photo Restore HAT 4x`, `Photo Restore HAT Sharper 4x` albo `Gentle Batch 2x`.
+4. Dla najlepszego AI wybierz `HAT`; `Real-ESRGAN` zostaw jako alternatywe/fallback.
 5. Kliknij `Add Image Job`, potem `Start Queue`.
 
 ## Uwagi
@@ -63,4 +65,5 @@ Skrypt:
 - Dla materialow `4:3` target `2160p` zachowuje proporcje, czyli wynik nie musi miec `3840x2160`; moze wyjsc np. `2880x2160`.
 - `RIFE` po pobraniu dziala od razu, bo model jest w paczce release.
 - Aplikacja pobiera sprawdzony oficjalny release `Real-ESRGAN-ncnn-vulkan` z kompletnym `models/`, wiec lokalny AI upscale dziala od razu po instalacji narzedzia.
+- Aplikacja potrafi tez zainstalowac oficjalne repo `HAT`, zaleznosci PyTorch i oficjalne pretrained models autorow.
 - Najbezpieczniejszy preset startowy to `Fast FFmpeg 1080p60`, `Fast FFmpeg 720p30` albo `AI Lift 1080p30` zalezne od materialu.

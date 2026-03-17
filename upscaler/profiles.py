@@ -248,6 +248,34 @@ PROFILES = {
 
 
 IMAGE_PROFILES = {
+    "Photo Restore HAT 4x": {
+        "description": "Domyslny najlepszy preset do zdjec: HAT z bardziej wiernym detalem i lekkim liftingiem koloru.",
+        "image_scale": 4,
+        "upscale_backend": "hat",
+        "upscale_model": "real_hat_gan",
+        "denoise_strength": 1,
+        "sharpen_strength": 0.12,
+        "brightness": 1.01,
+        "contrast": 1.04,
+        "saturation": 1.03,
+        "gamma": 1.0,
+        "auto_contrast": True,
+        "image_output_format": "png",
+    },
+    "Photo Restore HAT Sharper 4x": {
+        "description": "Mocniejszy i ostrzejszy HAT do bardziej efektownego upscale, kosztem naturalnosci.",
+        "image_scale": 4,
+        "upscale_backend": "hat",
+        "upscale_model": "real_hat_gan_sharper",
+        "denoise_strength": 1,
+        "sharpen_strength": 0.18,
+        "brightness": 1.01,
+        "contrast": 1.05,
+        "saturation": 1.03,
+        "gamma": 1.0,
+        "auto_contrast": True,
+        "image_output_format": "png",
+    },
     "Photo Lift 4x": {
         "description": "Pelny lifting zdjec z AI upscale 4x i lekkim color boostem.",
         "image_scale": 4,
